@@ -1,75 +1,57 @@
 pipeline {
     agent any
-    
-    environment {
-        SCANNER_HOME= tool 'sonar-scanner'
+    tools{
+        jdk 'jdk17'
+    }
+    environment{
+        SONAR_HOME = tool "sonar-scanner"
     }
 
     stages {
-        stage('Git Checkout') {
+        stage('Clone the Code ') {
             steps {
-                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/jaiswaladi246/Flask-postgresql.git'
+                git branch: 'main', url: 'https://github.com/udayyysharmaa/Python-PostgreSQL-Project.git'
             }
         }
-        
-        stage('Trivy FS Scan') {
+        stage('Sonarqube checker') {
             steps {
-               sh 'trivy fs --format table -o fs.html .'
-            }
-        }
-        
-        stage('Sonarqube Analysis'){
-            steps {
-                withSonarQubeEnv('sonar'){
-                        sh '$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=multitier -Dsonar.projectKey=multitier'
+                withSonarQubeEnv('sonar') {
+                    sh "$SONAR_HOME/bin/sonar-scanner -Dsonar.projectName=PythonProject -Dsonar.projectKey=Python12234"
                 }
             }
         }
-        
-        stage('Docker Build & Tag') {
+        stage('SonarQuebe Quality Check') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                        sh 'docker build -t adijaiswal/flaskapp:latest .'
-                        
-                    }
+                timeout(time: 1, unit: "MINUTES"){
+                    waitForQualityGate abortPipeline: false
                 }
+
             }
         }
-        
-        stage('Trivy image Scan') {
+        stage('Project Build') {
             steps {
-               sh 'trivy image --format table -o image.html adijaiswal/flaskapp:latest'
+                sh 'docker build -t projectpython:latest .'
             }
         }
-        
-        stage('Docker Push') {
+        stage('Trivy check') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                        sh 'docker push adijaiswal/flaskapp:latest'
-                        
-                    }
-                }
+                sh 'trivy image  projectpython:latest '
             }
         }
-        
-        stage('Deploy To Kubernetes') {
+        stage('Push to Docker hub ') {
             steps {
-               withKubeConfig(caCertificate: '', clusterName: 'devopsshack-cluster', contextName: '', credentialsId: 'k8-token', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://106B3EE2AEF1B9A1041B558B8FCC5D45.gr7.ap-south-1.eks.amazonaws.com') {
-                        sh ' kubectl apply -f manifest.yml -n webapps'
-                        sleep 30
+                withCredentials([usernamePassword(credentialsId:"dockerhubcred",passwordVariable:"dockerPass",usernameVariable:"dockerUser")]){
+                    sh "docker login -u ${env.dockerUser} -p ${env.dockerPass}"
+                    sh "docker tag projectpython:latest ${env.dockerUser}/projectpython:latest"
+                    sh "docker push ${env.dockerUser}/projectpython:latest"
+                    
                 }
+
             }
         }
-        
-        stage('Verify the Deployment') {
+        stage('Code Deploy') {
             steps {
-               withKubeConfig(caCertificate: '', clusterName: 'devopsshack-cluster', contextName: '', credentialsId: 'k8-token', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://106B3EE2AEF1B9A1041B558B8FCC5D45.gr7.ap-south-1.eks.amazonaws.com') {
-                        sh 'kubectl get pods -n webapps'
-                        sh 'kubectl get svc -n webapps'
-                       
-                }
+                sh 'docker-compose up -d'
             }
         }
     }
